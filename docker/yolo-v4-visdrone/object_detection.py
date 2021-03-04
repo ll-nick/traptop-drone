@@ -113,8 +113,7 @@ def nms(detections, score_threshold=0.25, nms_threshold=0.25):
     bboxes = []
     scores = []
     for detection in detections:
-        label, confidence, bbox = detection
-        x, y, w, h = bbox
+        _, confidence, bbox = detection
         bboxes.append(list(bbox))
         scores.append(confidence)
     indices = cv2.dnn.NMSBoxes(
@@ -130,7 +129,7 @@ def filter_border_detections(detections, crop, crop_size, image_size):
     detections_filtered = []
     for detection in detections:
         _, _, bbox = detection
-        x, y, w, h = bbox
+        x, y, _, _ = bbox
 
         xmin = x == 0 and crop[1] != 0
         ymin = y == 0 and crop[0] != 0
@@ -234,7 +233,7 @@ def save_labels(fn, image, detections, class_names):
 
 def print_detections(detections):
     histogram = dict((label, 0) for label, _, _ in detections)
-    for label, confidence, bbox in detections:
+    for label, _, _ in detections:
         histogram[label] += 1
 
     logmsg = f'Got {len(detections)} detections: '
@@ -270,8 +269,6 @@ def split_image(image_size, crop_size, min_overlap_ratio=0.1):
         for crop_idx in range(num_crops):
             rounded_overlap_sum = round(crop_idx * overlap)
             start = max(0, crop_idx * crop_length - rounded_overlap_sum)
-            end = min(total_length, start + crop_length)
-            end = start + crop_length
             indices.append(start)
         return indices
 
