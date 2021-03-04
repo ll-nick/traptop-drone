@@ -8,6 +8,7 @@ import time
 
 import cv2
 import numpy as np
+from click import progressbar
 
 import darknet
 
@@ -25,23 +26,44 @@ def parser():
     parser.add_argument('data_file', type=str, help='Path to data file')
     parser.add_argument('weights', type=str, help='Path to weights file')
     parser.add_argument(
-        'input', type=str, help='Image source. Can be a single image, a txt with paths to them, or a folder. Valid formats are jpg, jpeg or png.')
-    parser.add_argument('--batch_size', type=int, default=1,
-                        help='number of images to be processed at the same time')
-    parser.add_argument('--thresh', type=float, default=0.4,
+        'input',
+        type=str,
+        help='Image source. Can be a single image, a txt with paths to them, or a folder. Valid formats are jpg, jpeg or png.'
+    )
+    parser.add_argument(
+        '--batch_size',
+        type=int,
+        default=1,
+        help='number of images to be processed at the same time')
+    parser.add_argument('--thresh',
+                        type=float,
+                        default=0.4,
                         help='remove detections with lower confidence')
-    parser.add_argument('--take', type=int, default=None,
+    parser.add_argument('--take',
+                        type=int,
+                        default=None,
                         help='Number of samples to process')
-    parser.add_argument('--save_to', type=str,
-                        default=None, help='Export path')
-    parser.add_argument('--save_labels', action='store_true',
-                        help='Save detections for each image. Requires --save_to arg to be set.')
-    parser.add_argument('--save_image', action='store_true',
-                        help='Save image with detections. Requires --save_to arg to be set.')
+    parser.add_argument('--save_to',
+                        type=str,
+                        default=None,
+                        help='Export path')
+    parser.add_argument(
+        '--save_labels',
+        action='store_true',
+        help='Save detections for each image. Requires --save_to arg to be set.'
+    )
+    parser.add_argument(
+        '--save_image',
+        action='store_true',
+        help='Save image with detections. Requires --save_to arg to be set.')
     parser.add_argument('--print_detections',
-                        action='store_true', help='Print list of detections')
-    parser.add_argument("--crop_size", type=pair, default=None,
+                        action='store_true',
+                        help='Print list of detections')
+    parser.add_argument("--crop_size",
+                        type=pair,
+                        default=None,
                         help="Set an optional crop size.")
+    parser.add_argument('--gpu', type=int, default=0, help='GPU index')
     return parser.parse_args()
 
 
@@ -60,6 +82,8 @@ def check_args(args):
         raise ValueError(f'Invalid image path {os.path.abspath(args.input)}.')
     if args.save_image or args.save_labels:
         assert args.save_to is not None
+    if args.crop_size is None:
+        print('No crop size specified. Using image size.')
 
 
 def draw_boxes(detections, image, colors):
@@ -68,12 +92,12 @@ def draw_boxes(detections, image, colors):
         left, top, right, bottom = darknet.bbox2points(bbox)
         cv2.rectangle(image, (left, top), (right, bottom), colors[label], 2)
         cv2.putText(image, f'{label} ({round(100 * float(confidence))}%)',
-                    (left, top - 5), cv2.FONT_HERSHEY_PLAIN, 1, colors[label], 2)
+                    (left, top - 5), cv2.FONT_HERSHEY_PLAIN, 1, colors[label],
+                    2)
     return image
 
 
 def transform_detections(detections, crop):
-
     def transform_detection(detection, dx, dy, dw, dh):
         label, confidence, bbox = detection
         x, y, w, h = bbox
@@ -92,7 +116,6 @@ def transform_detections(detections, crop):
 
 
 def scale_detections(detections, scale):
-
     def scale_detection(detection, scale):
         label, confidence, bbox = detection
         x, y, w, h = bbox
@@ -116,8 +139,10 @@ def nms(detections, score_threshold=0.25, nms_threshold=0.25):
         _, confidence, bbox = detection
         bboxes.append(list(bbox))
         scores.append(confidence)
-    indices = cv2.dnn.NMSBoxes(
-        bboxes=bboxes, scores=scores, score_threshold=score_threshold, nms_threshold=nms_threshold)
+    indices = cv2.dnn.NMSBoxes(bboxes=bboxes,
+                               scores=scores,
+                               score_threshold=score_threshold,
+                               nms_threshold=nms_threshold)
     indices = np.array(indices).reshape(-1)
     if len(indices):
         detections = [detections[idx.astype(int)] for idx in indices]
@@ -192,14 +217,22 @@ def prepare_batch(network, images, channels=3):
     return darknet_image
 
 
-def batch_detection(network, images, class_names, class_colors,
-                    thresh=0.25, hier_thresh=.5, nms=.45, batch_size=4):
+def batch_detection(network,
+                    images,
+                    class_names,
+                    class_colors,
+                    thresh=0.25,
+                    hier_thresh=.5,
+                    nms=.45,
+                    batch_size=4):
     height, width, _ = check_shapes(images, batch_size)
     width = darknet.network_width(network)
     height = darknet.network_height(network)
     darknet_images = prepare_batch(network, images)
-    batch_detections = darknet.network_predict_batch(network, darknet_images, batch_size, width,
-                                                     height, thresh, hier_thresh, None, 0, 0)
+    batch_detections = darknet.network_predict_batch(network, darknet_images,
+                                                     batch_size, width, height,
+                                                     thresh, hier_thresh, None,
+                                                     0, 0)
     darknet.free_image(darknet_images)
 
     scale = [images[0].shape[1] / width, images[0].shape[0] / height]
@@ -216,19 +249,20 @@ def batch_detection(network, images, class_names, class_colors,
     return batch_predictions
 
 
-def convert_abs2rel(image, bbox):
+def convert_abs2rel(image_shape, bbox):
     x, y, w, h = bbox
-    height, width, _ = image.shape
-    return x/width, y/height, w/width, h/height
+    height, width, _ = image_shape
+    return x / width, y / height, w / width, h / height
 
 
-def save_labels(fn, image, detections, class_names):
+def save_labels(fn, image_shape, detections, class_names):
     with open(fn, 'w') as f:
         for label, confidence, bbox in detections:
-            x, y, w, h = convert_abs2rel(image, bbox)
+            x, y, w, h = convert_abs2rel(image_shape, bbox)
             label = class_names.index(label)
             f.write(
-                f'{label} {x:.4f} {y:.4f} {w:.4f} {h:.4f} {float(confidence):.4f}\n')
+                f'{label} {x:.4f} {y:.4f} {w:.4f} {h:.4f} {float(confidence):.4f}\n'
+            )
 
 
 def print_detections(detections):
@@ -247,7 +281,7 @@ def print_detections(detections):
 def create_batches(inputs, batch_size):
     outputs = []
     for idx in range(0, len(inputs), batch_size):
-        outputs.append(inputs[idx:idx+batch_size])
+        outputs.append(inputs[idx:idx + batch_size])
     last_batch = outputs[-1]
     last_input = last_batch[-1]
 
@@ -259,11 +293,15 @@ def create_batches(inputs, batch_size):
 
 
 def split_image(image_size, crop_size, min_overlap_ratio=0.1):
+
+    if np.array_equal(image_size, crop_size):
+        return [[0, 0]]
+
     min_overlap = min_overlap_ratio * crop_size
 
     def divide_single_dim(total_length, crop_length, min_overlap):
-        num_crops = math.ceil((total_length - min_overlap) /
-                              (crop_length - min_overlap))
+        num_crops = math.ceil(
+            (total_length - min_overlap) / (crop_length - min_overlap))
         overlap = (num_crops * crop_length - total_length) / (num_crops - 1)
         indices = []
         for crop_idx in range(num_crops):
@@ -283,57 +321,67 @@ def split_image(image_size, crop_size, min_overlap_ratio=0.1):
 
 
 def detect(args):
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+
     if args.save_to and (args.save_image or args.save_labels):
         print(f'Saving output to {os.path.abspath(args.save_to)}')
-        os.makedirs(args.save_to, exist_ok=True)
 
     network, class_names, class_colors = darknet.load_network(
         args.config_file,
         args.data_file,
         args.weights,
-        batch_size=args.batch_size
-    )
+        batch_size=args.batch_size)
 
     image_names = load_images(args.input, args.take)
 
-    for count, image_name in enumerate(image_names):
-        t_start = time.time()
-        image = cv2.imread(image_name)
-        image_size = np.array(image.shape[:2])
-        crops = split_image(image_size=image_size, crop_size=args.crop_size)
+    with progressbar(image_names,
+                     label=f'Processing {len(image_names)} images') as bar:
+        for image_name in bar:
+            image = cv2.imread(image_name)
+            image_size = np.array(image.shape[:2])
 
-        cropped_images = []
-        for crop in crops:
-            cropped_images.append(
-                image[crop[0]:crop[0]+args.crop_size[0], crop[1]:crop[1]+args.crop_size[1]])
+            if args.crop_size is None:
+                crop_size = image_size
+            else:
+                crop_size = args.crop_size
 
-        batch_images_list = create_batches(cropped_images, args.batch_size)
+            crops = split_image(image_size=image_size, crop_size=crop_size)
+            cropped_images = []
+            for crop in crops:
+                cropped_images.append(image[crop[0]:crop[0] + crop_size[0],
+                                            crop[1]:crop[1] + crop_size[1]])
 
-        batch_detections = []
-        for batch_images in batch_images_list:
-            batch_detections.extend(batch_detection(network, batch_images, class_names,
-                                                    class_colors, thresh=args.thresh, batch_size=args.batch_size))
+            batch_images_list = create_batches(cropped_images, args.batch_size)
 
-        all_detections = []
-        for detections, crop in zip(batch_detections, crops):
-            detections = filter_border_detections(
-                detections, crop, args.crop_size, image_size)
-            all_detections.extend(transform_detections(detections, crop))
-        detections = all_detections
-        detections = nms(detections)
+            batch_detections = []
+            for batch_images in batch_images_list:
+                batch_detections.extend(
+                    batch_detection(network,
+                                    batch_images,
+                                    class_names,
+                                    class_colors,
+                                    thresh=args.thresh,
+                                    batch_size=args.batch_size))
 
-        image = draw_boxes(detections, image, class_colors)
-        path_out = os.path.join(args.save_to,
-                                os.path.basename(image_name)).split('.')[:-1][0]
-        if args.save_image:
-            cv2.imwrite(filename=path_out + '.png', img=image)
-        if args.print_detections:
-            print_detections(detections)
-        if args.save_labels:
-            save_labels(path_out + '.txt', image, detections, class_names)
-        t_end = time.time()
-        print(
-            f'{count+1} / {len(image_names)} @ {int(1000 * (t_end - t_start))} ms')
+            all_detections = []
+            for detections, crop in zip(batch_detections, crops):
+                detections = filter_border_detections(detections, crop,
+                                                      crop_size, image_size)
+                all_detections.extend(transform_detections(detections, crop))
+            detections = all_detections
+            detections = nms(detections)
+
+            path_out = os.path.join(
+                args.save_to, os.path.basename(image_name)).split('.')[:-1][0]
+            if args.save_image:
+                image = draw_boxes(detections, image, class_colors)
+                cv2.imwrite(filename=path_out + '.png', img=image)
+            if args.print_detections:
+                print_detections(detections)
+            if args.save_labels:
+                save_labels(path_out + '.txt', image.shape, detections,
+                            class_names)
 
 
 if __name__ == '__main__':
